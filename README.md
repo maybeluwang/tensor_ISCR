@@ -1,7 +1,10 @@
 # Interactive Spoken Content Retrieval
 
+### Implementation
+  1. Implemented in Distributional Deep Q-Network
+
 ### Installation
-  1. Lasagne, Theano
+  1. Lasagne, tensorflow
   2. Progressbar, tqdm
   3. tsne, cprint
 

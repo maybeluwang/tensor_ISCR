@@ -1,24 +1,6 @@
-"""
-Code for deep Q-learning as described in:
-
-Playing Atari with Deep Reinforcement Learning
-NIPS Deep Learning Workshop 2013
-
-and
-
-Human-level control through deep reinforcement learning.
-Nature, 518(7540):529-533, February 2015
-
-
-Author of Lasagne port: Nissan Pow
-Modifications: Nathan Sprague
-"""
-#import lasagne
 import numpy as np
-#import theano
-#import theano.tensor as T
-#from updates import deepmind_rmsprop
 import tensorflow as tf
+import math
 
 class DeepQLearner:
     """
@@ -49,7 +31,6 @@ class DeepQLearner:
         self.network_width = net_width
         self.network_height = net_height
         self.sess = tf.Session()
-        #lasagne.random.set_rng(self.rng)
         self.initializer = tf.truncated_normal_initializer(0,0.02)
         self.activation = tf.nn.relu
         self.batch_accumulator = batch_accumulator
@@ -59,29 +40,36 @@ class DeepQLearner:
         self.R = tf.placeholder(tf.float32,[None, 1],'r')
         self.A = tf.placeholder(tf.int32, [None, 1], 'a')
         self.T = tf.placeholder(tf.float32, [None, 1], 't')
+        ## distributional implementation
+        self.Vmin = -5
+        self.Vmax = 5
+        self.atoms = 51
+        self.delta_z = float(self.Vmax-self.Vmin)/(self.atoms-1)
+        self.Prob_i = tf.placeholder(tf.float32, [None, self.atoms], name='probability_function')
 
-        #self.loss = tf.placeholder(tf.float32, [1], name='loss')
-        self.q_target = tf.placeholder(tf.float32, [None, self.num_actions], name='Q_target') 
+
+        # distributional implementation
+        self.q_target = tf.placeholder(tf.float32, [None, self.num_actions, self.atoms], name='Q_target') 
         
         self.update_counter = 0
         with tf.variable_scope('eval'):
             state = self.S 
             self.q_vals = self.build_rl_network_dnn(input_width, input_height,
-                                        num_actions, num_frames, batch_size, state/input_scale,trainable = True)
+                                        num_actions*self.atoms, num_frames, batch_size, state/input_scale,trainable = True)
         
         
         
         with tf.variable_scope('target'):
             state = self.S_
             self.next_q_vals = self.build_rl_network_dnn(input_width,
-                                                 input_height, num_actions,
+                                                 input_height, num_actions*self.atoms,
                                                  num_frames, batch_size, state/input_scale,trainable = False)
        
         self.e_params = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='eval')
         self.t_params = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='target')
         
-               
-        diff = self.q_target - self.q_vals#[np.arange(self.batch_size).astype(np.int32),        #                       actions.reshape(-1)].reshape((-1, 1))
+
+        diff = -tf.reduce_sum(tf.multiply(self.q_target, self.q_vals), axis=2)
         if self.clip_delta > 0:
             # If we simply take the squared clipped diff as our loss,
             # then the gradient will be zero whenever the diff exceeds
@@ -105,14 +93,7 @@ class DeepQLearner:
         else:
             raise ValueError("Bad accumulator: {}".format(batch_accumulator))
         self.loss = loss
-        '''params = lasagne.layers.helper.get_all_params(self.l_out)
-        givens = {
-            states: self.states_shared,
-            next_states: self.next_states_shared,
-            rewards: self.rewards_shared,
-            actions: self.actions_shared,
-            terminals: self.terminals_shared
-        }'''
+
 
         if update_rule == 'deepmind_rmsprop':
             updates = deepmind_rmsprop(loss, params, self.lr, self.rho,
@@ -138,54 +119,6 @@ class DeepQLearner:
         self.replace_target_op = [tf.assign(t, e) for t, e in zip(self.t_params, self.e_params)]
         if self.freeze_interval > 0:
             self.reset_q_hat()
- 
-        '''states = T.tensor4('states')
-        next_states = T.tensor4('next_states')
-        rewards = T.col('rewards')
-        actions = T.icol('actions')
-        terminals = T.icol('terminals')
-
-        self.states_shared = theano.shared(
-            np.zeros((batch_size, num_frames, input_height, input_width),
-                     dtype=theano.config.floatX))
-
-        self.next_states_shared = theano.shared(
-            np.zeros((batch_size, num_frames, input_height, input_width),
-                     dtype=theano.config.floatX))
-
-        self.rewards_shared = theano.shared(
-            np.zeros((batch_size, 1), dtype=theano.config.floatX),
-            broadcastable=(False, True))
-
-        self.actions_shared = theano.shared(
-            np.zeros((batch_size, 1), dtype='int32'),
-            broadcastable=(False, True))
-
-        self.terminals_shared = theano.shared(
-            np.zeros((batch_size, 1), dtype='int32'),
-            broadcastable=(False, True))
-
-        q_vals = lasagne.layers.get_output(self.l_out, states / input_scale)
-
-        if self.freeze_interval > 0:
-            next_q_vals = lasagne.layers.get_output(self.next_l_out,
-                                                    next_states / input_scale)
-        else:
-            next_q_vals = lasagne.layers.get_output(self.l_out,
-                                                    next_states / input_scale)
-            next_q_vals = theano.gradient.disconnected_grad(next_q_vals)'''
-        #dfafas
-               #if self.momentum > 0:
-        #    updates = lasagne.updates.apply_momentum(updates, None,
-        #                                             self.momentum)
-	#elif self.nesterov_momentum > 0:
-        #    updates = lasagne.updates.apply_nesterov_momentum(updates,None,
-	#					     self.nesterov_momentum)
-
-        #self._train = theano.function([], [loss, q_vals], updates=updates,
-        #                              givens=givens)
-        #self._q_vals = theano.function([], q_vals,
-        #                               givens={states: self.states_shared})
         
     def build_network(self, network_type, input_width, input_height,
                       output_dim, num_frames, batch_size,trainable=True):
@@ -213,6 +146,77 @@ class DeepQLearner:
         else:
             raise ValueError("Unrecognized network: {}".format(network_type))
 
+    def CA_Algorithm(self, states, actions, rewards, next_states, terminals):
+        """
+        Distributional Algorithm Implementation
+        Categorical Algorithm
+        
+        Train one batch.
+        Arguments:
+
+        states - b x f x h x w numpy array, where b is batch size,
+                 f is num frames, h is height and w is width.
+        actions - b x 1 numpy array of integers
+        rewards - b x 1 numpy array
+        next_states - b x f x h x w numpy array
+        terminals - b x 1 numpy boolean array
+
+        Returns: average loss
+        """
+        def BondReward(reward):
+            if reward > self.Vmax:
+                return self.Vmax
+            elif reward < self.Vmin:
+                return self.Vmin
+            else:
+                return reward
+
+        def softmax(logits):
+            e_x  = np.exp(logits)
+            return e_x/np.sum(e_x)
+
+        states = states.reshape(-1, self.input_width)
+        next_states = next_states.reshape(-1, self.input_width)
+        update_rule = self.update_rule
+        terminals = terminals.astype(np.float32) 
+        if (self.freeze_interval > 0 and
+            self.update_counter % self.freeze_interval == 0):
+            self.reset_q_hat()
+        q_vals, next_q_vals = self.sess.run([self.q_vals, self.next_q_vals],{self.S: states, self.A: actions, self.R: rewards, self.S_: next_states, self.T: terminals})
+
+        q_target = np.zeros((len(rewards), self.num_actions, self.atoms))
+        for batchIndex, r in enumerate(rewards):
+            BestActIndex = 0
+            BestQSum = -99999
+            for actIndex in range(self.num_actions):
+                # if dot cannot work, try multiply -> sum
+                Q_sum = np.dot(next_q_vals[batchIndex][actIndex], softmax(q_vals[batchIndex][actIndex]))
+                if Q_sum > BestQSum:
+                    BestQSum = Q_sum
+                    BestActIndex = actIndex
+            
+            p_next_astar = softmax(next_q_vals[batchIndex][actIndex])
+
+            m = np.zeros(self.atoms)
+            for j in range(self.atoms):
+                if terminals[batchIndex][0]:
+                    Tau_z_j = BondReward(r)
+                else:
+                    Tau_z_j = BondReward(r + self.discount * next_q_vals[batchIndex][actIndex][j])
+                b_j = float(Tau_z_j-self.Vmin)/self.delta_z
+                l = math.floor(b_j)
+                u = math.ceil(b_j)
+                l_int = int(l)
+                u_int = int(u)
+                m[l_int] = m[l_int] + p_next_astar[j]*(u - b_j)
+                m[u_int] = m[u_int] + p_next_astar[j]*(b_j - l)
+
+
+            q_target[batchIndex,BestActIndex,:] = m
+
+        _,loss = self.sess.run([self._train,self.loss], feed_dict={self.S: states, self.q_target: q_target})
+        self.update_counter += 1
+        return loss
 
 
     def train(self, states, actions, rewards, next_states, terminals):
@@ -226,17 +230,10 @@ class DeepQLearner:
         actions - b x 1 numpy array of integers
         rewards - b x 1 numpy array
         next_states - b x f x h x w numpy array
-        terminals - b x 1 numpy boolean array (currently ignored)
+        terminals - b x 1 numpy boolean array
 
         Returns: average loss
         """
-
-        #self.states_shared.set_value(states)
-        #self.next_states_shared.set_value(next_states)
-        #self.actions_shared.set_value(actions)
-        #self.rewards_shared.set_value(rewards)
-        #self.terminals_shared.set_value(terminals)
-        #actions = actions.astype(int32)
         states = states.reshape(-1, self.input_width)
         next_states = next_states.reshape(-1, self.input_width)
         update_rule = self.update_rule
@@ -246,47 +243,52 @@ class DeepQLearner:
             self.reset_q_hat()
         q_vals, next_q_vals = self.sess.run([self.q_vals, self.next_q_vals],{self.S: states, self.A: actions, self.R: rewards, self.S_: next_states, self.T: terminals})
         q_target = q_vals.copy()
-        print(q_vals)
-        print("q_vals")
-        #print(actions)
-        #print(self.R) 
-        #print(terminals)
+
         term = (np.ones_like(terminals) - terminals)
         next_wq = np.multiply(term, np.max(next_q_vals, axis=1))
         for i,r in enumerate(rewards):
             q_target[i, actions[i][0]] = r + self.discount *next_wq[i][0]
-        #q_vals = q_vals.reshape(-1,self.num_actions)
-              # print(tar)
-        print(q_target)
+
         _,loss = self.sess.run([self._train,self.loss], feed_dict={self.S: states, self.q_target: q_target})
-#        loss, _ = self._train()
         self.update_counter += 1
         return np.sqrt(loss)
 
     def get_q_vals(self, state):
-        #states = np.zeros((self.batch_size, self.num_frames, self.input_height,
-        #                   self.input_width), dtype=theano.config.floatX)
-        #states[0, ...] = state
         states = state.reshape((1,self.input_width))
-        #_, loss = self.sess.run([self._train, self.loss],{self.S: states, self.A: actions, self.R: rewards, self.S_: next_states})
-
         q_vals = self.sess.run([self.q_vals],{self.S: states})
- 
-        #self.states_shared.set_value(states)
-        return q_vals#self._q_vals()[0]
+        return q_vals
+
+    def get_q_vals_distributional(self, state):
+        states = state.reshape((1,self.input_width))
+        q_vals = self.sess.run([self.q_vals],{self.S: states})        
+        return q_vals
+
+    def choose_action_distributional(self, state, epsilon):
+        def softmax(logits):
+            e_x  = np.exp(logits)
+            return e_x/np.sum(e_x)
+
+        if self.rng.rand() < epsilon:
+            return self.rng.randint(0, self.num_actions)
+        q_vals = self.get_q_vals_distributional(state)
+
+        BestActIndex = 0
+        BestQSum = -99999
+        for actIndex in range(self.num_actions):
+            Q_sum = np.dot(q_vals[0][0][actIndex], softmax(q_vals[0][0][actIndex]))
+            if Q_sum > BestQSum:
+                BestQSum = Q_sum
+                BestActIndex = actIndex
+        return BestActIndex
 
     def choose_action(self, state, epsilon):
         if self.rng.rand() < epsilon:
             return self.rng.randint(0, self.num_actions)
         q_vals = self.get_q_vals(state)
-        print(q_vals)
         return np.argmax(q_vals)
 
     def reset_q_hat(self):
-        #all_params = lasagne.layers.helper.get_all_param_values(self.l_out)
-        #lasagne.layers.helper.set_all_param_values(self.next_l_out, all_params)
         self.sess.run(self.replace_target_op)
-        #self.t_params = self.e_params
 
     def build_nature_network(self, input_width, input_height, output_dim,
                              num_frames, batch_size):
@@ -409,146 +411,17 @@ class DeepQLearner:
 
         return l_out
 
-    def build_nips_network(self, input_width, input_height, output_dim,
-                           num_frames, batch_size):
-        """
-        Build a network consistent with the 2013 NIPS paper.
-        """
-        from lasagne.layers import cuda_convnet
-        l_in = lasagne.layers.InputLayer(
-            shape=(batch_size, num_frames, input_width, input_height)
-        )
-
-        l_conv1 = cuda_convnet.Conv2DCCLayer(
-            l_in,
-            num_filters=16,
-            filter_size=(8, 8),
-            stride=(4, 4),
-            nonlinearity=lasagne.nonlinearities.rectify,
-            #W=lasagne.init.HeUniform(c01b=True),
-            W=lasagne.init.Normal(.01),
-            b=lasagne.init.Constant(.1),
-            dimshuffle=True
-        )
-
-        l_conv2 = cuda_convnet.Conv2DCCLayer(
-            l_conv1,
-            num_filters=32,
-            filter_size=(4, 4),
-            stride=(2, 2),
-            nonlinearity=lasagne.nonlinearities.rectify,
-            #W=lasagne.init.HeUniform(c01b=True),
-            W=lasagne.init.Normal(.01),
-            b=lasagne.init.Constant(.1),
-            dimshuffle=True
-        )
-
-        l_hidden1 = lasagne.layers.DenseLayer(
-            l_conv2,
-            num_units=256,
-            nonlinearity=lasagne.nonlinearities.rectify,
-            #W=lasagne.init.HeUniform(),
-            W=lasagne.init.Normal(.01),
-            b=lasagne.init.Constant(.1)
-        )
-
-        l_out = lasagne.layers.DenseLayer(
-            l_hidden1,
-            num_units=output_dim,
-            nonlinearity=None,
-            #W=lasagne.init.HeUniform(),
-            W=lasagne.init.Normal(.01),
-            b=lasagne.init.Constant(.1)
-        )
-
-        return l_out
-
-    def build_nips_network_dnn(self, input_width, input_height, output_dim,
-                               num_frames, batch_size):
-        """
-        Build a network consistent with the 2013 NIPS paper.
-        """
-        # Import it here, in case it isn't installed.
-        from lasagne.layers import dnn
-
-        l_in = lasagne.layers.InputLayer(
-            shape=(batch_size, num_frames, input_width, input_height)
-        )
-
-
-        l_conv1 = dnn.Conv2DDNNLayer(
-            l_in,
-            num_filters=16,
-            filter_size=(8, 8),
-            stride=(4, 4),
-            nonlinearity=lasagne.nonlinearities.rectify,
-            #W=lasagne.init.HeUniform(),
-            W=lasagne.init.Normal(.01),
-            b=lasagne.init.Constant(.1)
-        )
-
-        l_conv2 = dnn.Conv2DDNNLayer(
-            l_conv1,
-            num_filters=32,
-            filter_size=(4, 4),
-            stride=(2, 2),
-            nonlinearity=lasagne.nonlinearities.rectify,
-            #W=lasagne.init.HeUniform(),
-            W=lasagne.init.Normal(.01),
-            b=lasagne.init.Constant(.1)
-        )
-
-        l_hidden1 = lasagne.layers.DenseLayer(
-            l_conv2,
-            num_units=256,
-            nonlinearity=lasagne.nonlinearities.rectify,
-            #W=lasagne.init.HeUniform(),
-            W=lasagne.init.Normal(.01),
-            b=lasagne.init.Constant(.1)
-        )
-
-        l_out = lasagne.layers.DenseLayer(
-            l_hidden1,
-            num_units=output_dim,
-            nonlinearity=None,
-            #W=lasagne.init.HeUniform(),
-            W=lasagne.init.Normal(.01),
-            b=lasagne.init.Constant(.1)
-        )
-
-        return l_out
-
-
     def build_rl_network_dnn(self, input_width, input_height, output_dim,
                             num_frames, batch_size, layer, trainable):
 
         var = 0.01
         bias = 0.1
  
-        #layer = tf.layers.Input(
-        #    shape=(batch_size, num_frames, input_width, input_height)
-        #)
-
-#        l_hidden1 = lasagne.layers.DenseLayer(
-#            l_in,
-#            num_units=_num_units,
-#            nonlinearity=lasagne.nonlinearities.rectify,
-#            W=lasagne.init.Normal(var),
-#            b=lasagne.init.Constant(bias)
-#        )
-
-#        l_hidden2 = lasagne.layers.DenseLayer(
-#            l_hidden1,
-#            num_units=_num_units,
-#            nonlinearity=lasagne.nonlinearities.rectify,
-#            W=lasagne.init.Normal(var),
-#            b=lasagne.init.Constant(bias)
-#        )
         for _ in xrange(self.network_height):
             layer = tf.layers.dense(
             layer,
             units=self.network_width,
-            activation = self.activation,#lasagne.nonlinearities.rectify,
+            activation = self.activation,
             kernel_initializer=tf.truncated_normal_initializer(stddev=var),
             bias_initializer=tf.constant_initializer(bias),
             trainable = trainable
@@ -562,6 +435,7 @@ class DeepQLearner:
             bias_initializer=tf.constant_initializer(bias),
             trainable = trainable
         )
+        l_out = tf.reshape(l_out, shape=[-1, self.num_actions, self.atoms])
 
         return l_out
 

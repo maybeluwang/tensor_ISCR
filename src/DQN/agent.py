@@ -135,7 +135,7 @@ class NeuralAgent(object):
 #        return_action = self.rng.randint(0, self.num_actions)
         if self.testing:
             phi = self.test_data_set.phi(observation)
-            return_action = self.network.choose_action(phi, 0.)
+            return_action = self.network.choose_action_distributional(phi, 0.)
         else:
             return_action = self.rng.randint(0, self.num_actions)
 
@@ -219,7 +219,7 @@ class NeuralAgent(object):
         data_set.add_sample(self.last_img, self.last_action, reward, False)
         if self.step_counter >= self.phi_length:
             phi = data_set.phi(cur_img)
-            action = self.network.choose_action(phi, epsilon)
+            action = self.network.choose_action_distributional(phi, epsilon)
 #            logging.debug( self.network.q_vals(phi) )
 #            print( 'q_val : '+ str(self.network.q_vals(phi)) +'\taction : '+str(action) )
         else:
@@ -237,7 +237,7 @@ class NeuralAgent(object):
         states, actions, rewards, next_states, terminals = \
                                 self.data_set.random_batch(
                                     self.network.batch_size)
-        return self.network.train(states, actions, rewards,
+        return self.network.CA_Algorithm(states, actions, rewards,
                                   next_states, terminals)
 
 
