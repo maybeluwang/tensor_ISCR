@@ -4,17 +4,16 @@ construct randomly selected batches of phi's from the stored history.
 
 import numpy as np
 import time
-import theano
-
-floatX = theano.config.floatX
 
 class DataSet(object):
-    """A replay memory consisting of circular buffers for observed images,
-actions, and rewards.
-
     """
+    A replay memory consisting of circular buffers for observed images,
+    actions, and rewards.
+    """
+    
     def __init__(self, width, height, rng, max_steps=1000, phi_length=4):
-        """Construct a DataSet.
+        """
+        Construct a DataSet.
 
         Arguments:
             width, height - image size
@@ -37,7 +36,7 @@ actions, and rewards.
         # Allocate the circular buffers and indices.
         self.imgs = np.zeros((max_steps, height, width), dtype='uint8')
         self.actions = np.zeros(max_steps, dtype='int32')
-        self.rewards = np.zeros(max_steps, dtype=floatX)
+        self.rewards = np.zeros(max_steps, dtype='float32')
         self.terminal = np.zeros(max_steps, dtype='bool')
 
         self.bottom = 0
@@ -45,7 +44,8 @@ actions, and rewards.
         self.size = 0
 
     def add_sample(self, img, action, reward, terminal):
-        """Add a time step record.
+        """
+        Add a time step record.
 
         Arguments:
             img -- observed image
@@ -66,24 +66,28 @@ actions, and rewards.
         self.top = (self.top + 1) % self.max_steps
 
     def __len__(self):
-        """Return an approximate count of stored state transitions."""
+        """
+        Return an approximate count of stored state transitions.
+        """
         # TODO: Properly account for indices which can't be used, as in
         # random_batch's check.
         return max(0, self.size - self.phi_length)
 
     def last_phi(self):
-        """Return the most recent phi (sequence of image frames)."""
+        """
+        Return the most recent phi (sequence of image frames).
+        """
         indexes = np.arange(self.top - self.phi_length, self.top)
         return self.imgs.take(indexes, axis=0, mode='wrap')
 
     def phi(self, img):
-        """Return a phi (sequence of image frames), using the last phi_length -
+        """
+        Return a phi (sequence of image frames), using the last phi_length -
         1, plus img.
-
         """
         indexes = np.arange(self.top - self.phi_length + 1, self.top)
 
-        phi = np.empty((self.phi_length, self.height, self.width), dtype=floatX)
+        phi = np.empty((self.phi_length, self.height, self.width), dtype='float32')
         phi[0:self.phi_length - 1] = self.imgs.take(indexes,
                                                     axis=0,
                                                     mode='wrap')
@@ -91,9 +95,9 @@ actions, and rewards.
         return phi
 
     def random_batch(self, batch_size):
-        """Return corresponding states, actions, rewards, terminal status, and
-next_states for batch_size randomly chosen state transitions.
-
+        """
+        Return corresponding states, actions, rewards, terminal status, and
+        next_states for batch_size randomly chosen state transitions.
         """
         # Allocate the response.
         states = np.zeros((batch_size,
@@ -102,7 +106,7 @@ next_states for batch_size randomly chosen state transitions.
                            self.width),
                           dtype='uint8')
         actions = np.zeros((batch_size, 1), dtype='int32')
-        rewards = np.zeros((batch_size, 1), dtype=floatX)
+        rewards = np.zeros((batch_size, 1), dtype='float32')
         terminal = np.zeros((batch_size, 1), dtype='bool')
         next_states = np.zeros((batch_size,
                                 self.phi_length,
