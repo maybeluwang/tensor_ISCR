@@ -40,7 +40,8 @@ class DeepQLearner:
         self.R = tf.placeholder(tf.float32,[None, 1],'r')
         self.A = tf.placeholder(tf.int32, [None, 1], 'a')
         self.T = tf.placeholder(tf.float32, [None, 1], 't')
-        self.distributional = False
+        self.distributional = True
+        self.dueling = True
 
         if self.distributional:
             self.Vmin = -5
@@ -51,18 +52,18 @@ class DeepQLearner:
             self.q_target = tf.placeholder(tf.float32, [None, self.num_actions, self.atoms], name='Q_target')
         else:
             self.q_target =  tf.placeholder(tf.float32, [None, self.num_actions], name='Q_target')
-        
+
         self.update_counter = 0
         with tf.variable_scope('eval'):
-            state = self.S 
+            state = self.S
             if self.distributional:
                 self.q_vals = self.build_rl_network_dnn(input_width, input_height,
                                         num_actions*self.atoms, num_frames, batch_size, state/input_scale,trainable = True)
             else:
                 self.q_vals = self.build_rl_network_dnn(input_width, input_height,
                                         num_actions, num_frames, batch_size, state/input_scale,trainable = True)
-        
-        
+
+
         with tf.variable_scope('target'):
             state = self.S_
             if self.distributional:
@@ -73,10 +74,10 @@ class DeepQLearner:
                 self.next_q_vals = self.build_rl_network_dnn(input_width,
                                                  input_height, num_actions,
                                                  num_frames, batch_size, state/input_scale,trainable = False)
-       
+
         self.e_params = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='eval')
         self.t_params = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='target')
-        
+
         if self.distributional:
             diff = -tf.reduce_sum(tf.multiply(self.q_target, self.q_vals), axis=2)
         else:
@@ -107,31 +108,16 @@ class DeepQLearner:
         self.loss = loss
 
 
-        if update_rule == 'deepmind_rmsprop':
-            updates = deepmind_rmsprop(loss, params, self.lr, self.rho,
-                                       self.rms_epsilon)
-        elif update_rule == 'rmsprop':
-            updates = lasagne.updates.rmsprop(loss, params, self.lr, self.rho,
-                                              self.rms_epsilon)
-        elif update_rule == 'adagrad':
-		updates = lasagne.updates.adagrad(loss, params, self.lr,
-							self.rms_epsilon)
-        elif update_rule == 'adadelta':
-		updates = lasagne.updates.adadelta(loss, params, self.lr, self.rho,
-						self.rms_epsilon)
-        elif update_rule == 'sgd':
-            updates = lasagne.updates.sgd(loss, params, self.lr)
-        
-        elif update_rule == 'adam':
+        if update_rule == 'adam':
             self._train = tf.train.AdamOptimizer(self.lr).minimize(loss,var_list=self.e_params)
         else:
             raise ValueError("Unrecognized update: {}".format(update_rule))
-        
+
         self.sess.run(tf.global_variables_initializer())
         self.replace_target_op = [tf.assign(t, e) for t, e in zip(self.t_params, self.e_params)]
         if self.freeze_interval > 0:
             self.reset_q_hat()
-        
+
     def build_network(self, network_type, input_width, input_height,
                       output_dim, num_frames, batch_size,trainable=True):
         if network_type == "nature_cuda":
@@ -162,7 +148,7 @@ class DeepQLearner:
         """
         Distributional Algorithm Implementation
         Categorical Algorithm
-        
+
         Train one batch.
         Arguments:
 
@@ -190,7 +176,7 @@ class DeepQLearner:
         states = states.reshape(-1, self.input_width)
         next_states = next_states.reshape(-1, self.input_width)
         update_rule = self.update_rule
-        terminals = terminals.astype(np.float32) 
+        terminals = terminals.astype(np.float32)
         if (self.freeze_interval > 0 and
             self.update_counter % self.freeze_interval == 0):
             self.reset_q_hat()
@@ -206,7 +192,7 @@ class DeepQLearner:
                 if Q_sum > BestQSum:
                     BestQSum = Q_sum
                     BestActIndex = actIndex
-            
+
             p_next_astar = softmax(next_q_vals[batchIndex][actIndex])
 
             m = np.zeros(self.atoms)
@@ -222,7 +208,6 @@ class DeepQLearner:
                 u_int = int(u)
                 m[l_int] = m[l_int] + p_next_astar[j]*(u - b_j)
                 m[u_int] = m[u_int] + p_next_astar[j]*(b_j - l)
-                print("Tau_z_j", Tau_z_j)
             q_target[batchIndex,BestActIndex,:] = m
 
         _,loss = self.sess.run([self._train,self.loss], feed_dict={self.S: states, self.q_target: q_target})
@@ -248,7 +233,7 @@ class DeepQLearner:
         states = states.reshape(-1, self.input_width)
         next_states = next_states.reshape(-1, self.input_width)
         update_rule = self.update_rule
-        terminals = terminals.astype(np.float32) 
+        terminals = terminals.astype(np.float32)
         if (self.freeze_interval > 0 and
             self.update_counter % self.freeze_interval == 0):
             self.reset_q_hat()
@@ -260,7 +245,6 @@ class DeepQLearner:
         for i,r in enumerate(rewards):
             q_target[i, actions[i][0]] = r + self.discount *next_wq[i][0]
 
-        print(q_target)
         _,loss = self.sess.run([self._train,self.loss], feed_dict={self.S: states, self.q_target: q_target})
         self.update_counter += 1
         return np.sqrt(loss)
@@ -272,7 +256,7 @@ class DeepQLearner:
 
     def get_q_vals_distributional(self, state):
         states = state.reshape((1,self.input_width))
-        q_vals = self.sess.run([self.q_vals],{self.S: states})        
+        q_vals = self.sess.run([self.q_vals],{self.S: states})
         return q_vals
 
     def choose_action_distributional(self, state, epsilon):
@@ -428,29 +412,45 @@ class DeepQLearner:
 
         var = 0.01
         bias = 0.1
- 
         for _ in xrange(self.network_height):
-            layer = tf.layers.dense(
-            layer,
-            units=self.network_width,
-            activation = self.activation,
-            kernel_initializer=tf.truncated_normal_initializer(stddev=var),
-            bias_initializer=tf.constant_initializer(bias),
-            trainable = trainable
-        )
+                layer = tf.layers.dense(
+                layer,
+                units=self.network_width,
+                activation = self.activation,
+                kernel_initializer=tf.truncated_normal_initializer(stddev=var),
+                bias_initializer=tf.constant_initializer(bias),
+                trainable = trainable
+            )
+        if self.dueling:
+            V_out = tf.layers.dense(
+                layer,
+                units=output_dim,
+                kernel_initializer=tf.truncated_normal_initializer(stddev=var),
+                bias_initializer=tf.constant_initializer(bias),
+                trainable = trainable
+            )
+            A_out = tf.layers.dense(
+                layer,
+                units=output_dim,
+                kernel_initializer=tf.truncated_normal_initializer(stddev=var),
+                bias_initializer=tf.constant_initializer(bias),
+                trainable = trainable
+            )
+            # Q = V(s) + A(s,a)
+            out = V_out + (A_out- tf.reduce_mean(A_out, axis=1, keep_dims=True))
+        else:
+            out = tf.layers.dense(
+                layer,
+                units=output_dim,
+                kernel_initializer=tf.truncated_normal_initializer(stddev=var),
+                bias_initializer=tf.constant_initializer(bias),
+                trainable = trainable
+            )
 
-        l_out = tf.layers.dense(
-            layer,
-            units=output_dim,
-            #activation = self.activation,
-            kernel_initializer=tf.truncated_normal_initializer(stddev=var),
-            bias_initializer=tf.constant_initializer(bias),
-            trainable = trainable
-        )
         if self.distributional:
-            l_out = tf.reshape(l_out, shape=[-1, self.num_actions, self.atoms])
+            out = tf.reshape(out, shape=[-1, self.num_actions, self.atoms])
 
-        return l_out
+        return out
 
     def build_linear_network(self, input_width, input_height, output_dim,
                              num_frames, batch_size):
