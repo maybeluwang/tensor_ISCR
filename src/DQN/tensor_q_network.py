@@ -40,36 +40,48 @@ class DeepQLearner:
         self.R = tf.placeholder(tf.float32,[None, 1],'r')
         self.A = tf.placeholder(tf.int32, [None, 1], 'a')
         self.T = tf.placeholder(tf.float32, [None, 1], 't')
-        ## distributional implementation
-        self.Vmin = -5
-        self.Vmax = 5
-        self.atoms = 51
-        self.delta_z = float(self.Vmax-self.Vmin)/(self.atoms-1)
-        self.Prob_i = tf.placeholder(tf.float32, [None, self.atoms], name='probability_function')
+        self.distributional = True
 
-
-        # distributional implementation
-        self.q_target = tf.placeholder(tf.float32, [None, self.num_actions, self.atoms], name='Q_target') 
+        if self.distributional:
+            self.Vmin = -5
+            self.Vmax = 5
+            self.atoms = 51
+            self.delta_z = float(self.Vmax-self.Vmin)/(self.atoms-1)
+            self.Prob_i = tf.placeholder(tf.float32, [None, self.atoms], name='probability_function')
+            self.q_target = tf.placeholder(tf.float32, [None, self.num_actions, self.atoms], name='Q_target')
+        else:
+            self.q_target =  tf.placeholder(tf.float32, [None, self.num_actions], name='Q_target')
         
         self.update_counter = 0
         with tf.variable_scope('eval'):
             state = self.S 
-            self.q_vals = self.build_rl_network_dnn(input_width, input_height,
+            if self.distributional:
+                self.q_vals = self.build_rl_network_dnn(input_width, input_height,
                                         num_actions*self.atoms, num_frames, batch_size, state/input_scale,trainable = True)
-        
+            else:
+                self.q_vals = self.build_rl_network_dnn(input_width, input_height,
+                                        num_actions, num_frames, batch_size, state/input_scale,trainable = True)
         
         
         with tf.variable_scope('target'):
             state = self.S_
-            self.next_q_vals = self.build_rl_network_dnn(input_width,
+            if self.distributional:
+                self.next_q_vals = self.build_rl_network_dnn(input_width,
                                                  input_height, num_actions*self.atoms,
+                                                 num_frames, batch_size, state/input_scale,trainable = False)
+            else:
+                self.next_q_vals = self.build_rl_network_dnn(input_width,
+                                                 input_height, num_actions,
                                                  num_frames, batch_size, state/input_scale,trainable = False)
        
         self.e_params = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='eval')
         self.t_params = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='target')
         
+        if self.distributional:
+            diff = -tf.reduce_sum(tf.multiply(self.q_target, self.q_vals), axis=2)
+        else:
+            diff = self.q_target - self.q_vals
 
-        diff = -tf.reduce_sum(tf.multiply(self.q_target, self.q_vals), axis=2)
         if self.clip_delta > 0:
             # If we simply take the squared clipped diff as our loss,
             # then the gradient will be zero whenever the diff exceeds

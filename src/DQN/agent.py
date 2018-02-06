@@ -9,11 +9,8 @@ import os
 import cPickle
 import time
 import logging
-
 import numpy as np
-
 import ale_data_set
-
 import sys
 sys.setrecursionlimit(10000)
 
@@ -70,9 +67,6 @@ class NeuralAgent(object):
             self.epsilon_rate = 0
 
         self.testing = False
-
-        #self._open_results_file()
-        #self._open_learning_file()
 
         self.episode_counter = 0
         self.batch_counter = 0
@@ -132,10 +126,13 @@ class NeuralAgent(object):
 
         self.start_time = time.time()
 
-#        return_action = self.rng.randint(0, self.num_actions)
         if self.testing:
             phi = self.test_data_set.phi(observation)
-            return_action = self.network.choose_action_distributional(phi, 0.)
+            if self.network.distributional:
+                return_action = self.network.choose_action_distributional(phi, 0.)
+            else:
+                return_action = self.network.choose_action(phi, 0.)
+
         else:
             return_action = self.rng.randint(0, self.num_actions)
 
@@ -219,9 +216,10 @@ class NeuralAgent(object):
         data_set.add_sample(self.last_img, self.last_action, reward, False)
         if self.step_counter >= self.phi_length:
             phi = data_set.phi(cur_img)
-            action = self.network.choose_action_distributional(phi, epsilon)
-#            logging.debug( self.network.q_vals(phi) )
-#            print( 'q_val : '+ str(self.network.q_vals(phi)) +'\taction : '+str(action) )
+            if self.network.distributional:
+                action = self.network.choose_action_distributional(phi, epsilon)
+            else:
+                action = self.network.choose_action(phi, epsilon)
         else:
             print 'random action'
             action = self.rng.randint(0, self.num_actions)
@@ -237,7 +235,11 @@ class NeuralAgent(object):
         states, actions, rewards, next_states, terminals = \
                                 self.data_set.random_batch(
                                     self.network.batch_size)
-        return self.network.CA_Algorithm(states, actions, rewards,
+        if self.network.distributional:
+            return self.network.CA_Algorithm(states, actions, rewards,
+                                  next_states, terminals)
+        else:
+            return self.network.train(states, actions, rewards,
                                   next_states, terminals)
 
 
@@ -272,18 +274,13 @@ class NeuralAgent(object):
                                      np.clip(reward, -1, 1),
                                      True)
 
-#            logging.info("steps/second: {:.2f}".format(\
-#                            self.step_counter/total_time))
-
             if self.batch_counter > 0:
-                #self._update_learning_file()
                 self.episode_loss = np.mean(self.loss_averages)
                 logging.debug("average loss: {:.4f}".format(self.episode_loss))
 
     def finish_epoch(self, epoch):
         net_file = open(self.exp_dir + '/network_file_' + str(epoch) + \
                         '.pkl', 'w')
-        #cPickle.dump(self.network, net_file, -1)
         net_file.close()
 
     def start_testing(self):
@@ -294,18 +291,6 @@ class NeuralAgent(object):
     def finish_testing(self, epoch):
         self.testing = False
         holdout_size = 3200
-
-        #if self.holdout_data is None and len(self.data_set) > holdout_size:
-        #    self.holdout_data = self.data_set.random_batch(holdout_size)[0]
-
-        #holdout_sum = 0
-        #if self.holdout_data is not None:
-        #    for i in range(holdout_size):
-        #        holdout_sum += np.max(
-        #            self.network.q_vals(self.holdout_data[i, ...]))
-
-        #self._update_results_file(epoch, self.episode_counter,
-        #                          holdout_sum / holdout_size)
 
 
 if __name__ == "__main__":
