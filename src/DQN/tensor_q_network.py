@@ -40,7 +40,7 @@ class DeepQLearner:
         self.R = tf.placeholder(tf.float32,[None, 1],'r')
         self.A = tf.placeholder(tf.int32, [None, 1], 'a')
         self.T = tf.placeholder(tf.float32, [None, 1], 't')
-        self.distributional = True
+        self.distributional = False
 
         if self.distributional:
             self.Vmin = -5
@@ -114,11 +114,11 @@ class DeepQLearner:
             updates = lasagne.updates.rmsprop(loss, params, self.lr, self.rho,
                                               self.rms_epsilon)
         elif update_rule == 'adagrad':
-	    updates = lasagne.updates.adagrad(loss, params, self.lr,
+		updates = lasagne.updates.adagrad(loss, params, self.lr,
 							self.rms_epsilon)
         elif update_rule == 'adadelta':
-	    updates = lasagne.updates.adadelta(loss, params, self.lr, self.rho,
-        				self.rms_epsilon)
+		updates = lasagne.updates.adadelta(loss, params, self.lr, self.rho,
+						self.rms_epsilon)
         elif update_rule == 'sgd':
             updates = lasagne.updates.sgd(loss, params, self.lr)
         
@@ -196,7 +196,7 @@ class DeepQLearner:
             self.reset_q_hat()
         q_vals, next_q_vals = self.sess.run([self.q_vals, self.next_q_vals],{self.S: states, self.A: actions, self.R: rewards, self.S_: next_states, self.T: terminals})
 
-        q_target = np.zeros((len(rewards), self.num_actions, self.atoms))
+        q_target = q_vals.copy()
         for batchIndex, r in enumerate(rewards):
             BestActIndex = 0
             BestQSum = -99999
@@ -222,8 +222,7 @@ class DeepQLearner:
                 u_int = int(u)
                 m[l_int] = m[l_int] + p_next_astar[j]*(u - b_j)
                 m[u_int] = m[u_int] + p_next_astar[j]*(b_j - l)
-
-
+                print("Tau_z_j", Tau_z_j)
             q_target[batchIndex,BestActIndex,:] = m
 
         _,loss = self.sess.run([self._train,self.loss], feed_dict={self.S: states, self.q_target: q_target})
@@ -261,6 +260,7 @@ class DeepQLearner:
         for i,r in enumerate(rewards):
             q_target[i, actions[i][0]] = r + self.discount *next_wq[i][0]
 
+        print(q_target)
         _,loss = self.sess.run([self._train,self.loss], feed_dict={self.S: states, self.q_target: q_target})
         self.update_counter += 1
         return np.sqrt(loss)
@@ -447,7 +447,8 @@ class DeepQLearner:
             bias_initializer=tf.constant_initializer(bias),
             trainable = trainable
         )
-        l_out = tf.reshape(l_out, shape=[-1, self.num_actions, self.atoms])
+        if self.distributional:
+            l_out = tf.reshape(l_out, shape=[-1, self.num_actions, self.atoms])
 
         return l_out
 
