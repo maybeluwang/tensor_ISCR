@@ -30,12 +30,16 @@ class DeepQLearner:
         self.rng = rng
         self.network_width = net_width
         self.network_height = net_height
-        self.sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))
-        gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.25)
+
+        config = tf.ConfigProto()
+        config.gpu_options.allow_growth=True
+        self.sess = tf.Session(config=config)
+
         self.initializer = tf.truncated_normal_initializer(0,0.02)
         self.activation = tf.nn.relu
         self.batch_accumulator = batch_accumulator
         self.update_rule = update_rule
+
         self.S = tf.placeholder(tf.float32,[None, self.input_width], 's')
         self.S_ = tf.placeholder(tf.float32, [None, self.input_width], 's_')
         self.R = tf.placeholder(tf.float32,[None, 1],'r')
@@ -45,9 +49,9 @@ class DeepQLearner:
         self.dueling = False
 
         if self.distributional:
-            self.Vmin = -6
-            self.Vmax = 6
-            self.atoms = 51
+            self.Vmin = -5
+            self.Vmax = 5
+            self.atoms = 11
             self.delta_z = float(self.Vmax-self.Vmin)/(self.atoms-1)
             self.Prob_i = tf.placeholder(tf.float32, [None, self.atoms], name='probability_function')
             self.q_target = tf.placeholder(tf.float32, [None, self.num_actions, self.atoms], name='Q_target')
