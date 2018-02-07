@@ -31,6 +31,7 @@ class DeepQLearner:
         self.network_width = net_width
         self.network_height = net_height
         self.sess = tf.Session()
+		gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.25)
         self.initializer = tf.truncated_normal_initializer(0,0.02)
         self.activation = tf.nn.relu
         self.batch_accumulator = batch_accumulator
@@ -41,11 +42,11 @@ class DeepQLearner:
         self.A = tf.placeholder(tf.int32, [None, 1], 'a')
         self.T = tf.placeholder(tf.float32, [None, 1], 't')
         self.distributional = True
-        self.dueling = True
+        self.dueling = False
 
         if self.distributional:
-            self.Vmin = -5
-            self.Vmax = 5
+            self.Vmin = -6
+            self.Vmax = 6
             self.atoms = 51
             self.delta_z = float(self.Vmax-self.Vmin)/(self.atoms-1)
             self.Prob_i = tf.placeholder(tf.float32, [None, self.atoms], name='probability_function')
@@ -113,7 +114,7 @@ class DeepQLearner:
         else:
             raise ValueError("Unrecognized update: {}".format(update_rule))
 
-        self.sess.run(tf.global_variables_initializer())
+        self.sess.run(tf.global_variables_initializer(), config=tf.ConfigProto(gpu_options=gpu_options))
         self.replace_target_op = [tf.assign(t, e) for t, e in zip(self.t_params, self.e_params)]
         if self.freeze_interval > 0:
             self.reset_q_hat()
