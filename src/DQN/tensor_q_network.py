@@ -176,7 +176,10 @@ class DeepQLearner:
 
         def softmax(logits):
             e_x  = np.exp(logits)
-            return e_x/np.sum(e_x)
+            if np.sum(e_x) == 0.0:
+                return np.full(len(logits),(1.0/self.atoms))
+            else:
+                return e_x/np.sum(e_x)
 
         states = states.reshape(-1, self.input_width)
         next_states = next_states.reshape(-1, self.input_width)
@@ -267,7 +270,10 @@ class DeepQLearner:
     def choose_action_distributional(self, state, epsilon):
         def softmax(logits):
             e_x  = np.exp(logits)
-            return e_x/np.sum(e_x)
+            if np.sum(e_x) == 0.0:
+                return np.full(len(logits),(1.0/self.atoms))
+            else:
+                return e_x/np.sum(e_x)
 
         if self.rng.rand() < epsilon:
             return self.rng.randint(0, self.num_actions)
