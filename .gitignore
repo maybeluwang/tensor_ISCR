@@ -113,3 +113,6 @@ model*
 
 # result
 result_survey/
+
+# run_script
+run_example.sh
