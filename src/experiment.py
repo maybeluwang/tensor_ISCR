@@ -122,7 +122,7 @@ class Experiment(object):
         nesterov_momentum = 0.
         network_type = 'rl_dnn'
         batch_accumulator = 'sum'
-        rng = np.random.RandomState(seed=55)
+        rng = np.random.RandomState()
 
         network = tensor_q_network.DeepQLearner(
                                         input_width       = feature_length,

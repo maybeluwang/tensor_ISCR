@@ -49,12 +49,11 @@ class DeepQLearner:
         self.dueling = False
 
         if self.distributional:
-            self.Vmin = -5
-            self.Vmax = 5
+            self.Vmin = -100
+            self.Vmax = 100
             self.atoms = 11
             self.delta_z = float(self.Vmax-self.Vmin)/(self.atoms-1)
-            self.Prob_i = tf.placeholder(tf.float32, [None, self.atoms], name='probability_function')
-            self.q_target = tf.placeholder(tf.float32, [None, self.num_actions, self.atoms], name='Q_target')
+            self.p_target = tf.placeholder(tf.float32, [None, self.num_actions, self.atoms], name='Q_target')
         else:
             self.q_target =  tf.placeholder(tf.float32, [None, self.num_actions], name='Q_target')
 
@@ -75,6 +74,7 @@ class DeepQLearner:
                 self.next_q_vals = self.build_rl_network_dnn(input_width,
                                                  input_height, num_actions*self.atoms,
                                                  num_frames, batch_size, state/input_scale,trainable = False)
+
             else:
                 self.next_q_vals = self.build_rl_network_dnn(input_width,
                                                  input_height, num_actions,
@@ -84,25 +84,27 @@ class DeepQLearner:
         self.t_params = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='target')
 
         if self.distributional:
-            diff = -tf.reduce_sum(tf.multiply(self.q_target, self.q_vals), axis=2)
+            self.p_vals = tf.nn.softmax(self.q_vals)
+            self.next_p_vals = tf.nn.softmax(self.next_q_vals)
+            loss = -tf.reduce_sum(tf.multiply(self.p_target, tf.nn.log_softmax(self.q_vals)), axis=2)
         else:
             diff = self.q_target - self.q_vals
 
-        if self.clip_delta > 0:
-            # If we simply take the squared clipped diff as our loss,
-            # then the gradient will be zero whenever the diff exceeds
-            # the clip bounds. To avoid this, we extend the loss
-            # linearly past the clip point to keep the gradient constant
-            # in that regime.
-            #
-            # This is equivalent to declaring d loss/d q_vals to be
-            # equal to the clipped diff, then backpropagating from
-            # there, which is what the DeepMind implementation does.
-            quadratic_part = tf.minimum(abs(diff), self.clip_delta)
-            linear_part = abs(diff) - quadratic_part
-            loss = 0.5 * quadratic_part ** 2 + self.clip_delta * linear_part
-        else:
-            loss = 0.5 * diff ** 2
+            if self.clip_delta > 0:
+                # If we simply take the squared clipped diff as our loss,
+                # then the gradient will be zero whenever the diff exceeds
+                # the clip bounds. To avoid this, we extend the loss
+                # linearly past the clip point to keep the gradient constant
+                # in that regime.
+                #
+                # This is equivalent to declaring d loss/d q_vals to be
+                # equal to the clipped diff, then backpropagating from
+                # there, which is what the DeepMind implementation does.
+                quadratic_part = tf.minimum(abs(diff), self.clip_delta)
+                linear_part = abs(diff) - quadratic_part
+                loss = 0.5 * quadratic_part ** 2 + self.clip_delta * linear_part
+            else:
+                loss = 0.5 * diff ** 2
 
         if self.batch_accumulator == 'sum':
             loss = tf.reduce_sum(loss)
@@ -166,21 +168,6 @@ class DeepQLearner:
 
         Returns: average loss
         """
-        def BondReward(reward):
-            if reward > self.Vmax:
-                return self.Vmax
-            elif reward < self.Vmin:
-                return self.Vmin
-            else:
-                return reward
-
-        def softmax(logits):
-            e_x  = np.exp(logits)
-            if np.sum(e_x) == 0.0:
-                return np.full(len(logits),(1.0/self.atoms))
-            else:
-                return e_x/np.sum(e_x)
-
         states = states.reshape(-1, self.input_width)
         next_states = next_states.reshape(-1, self.input_width)
         update_rule = self.update_rule
@@ -188,37 +175,26 @@ class DeepQLearner:
         if (self.freeze_interval > 0 and
             self.update_counter % self.freeze_interval == 0):
             self.reset_q_hat()
-        q_vals, next_q_vals = self.sess.run([self.q_vals, self.next_q_vals],{self.S: states, self.A: actions, self.R: rewards, self.S_: next_states, self.T: terminals})
+        next_q_vals, p_vals, next_p_vals = self.sess.run([self.next_q_vals, self.p_vals, self.next_p_vals],{self.S: states, self.A: actions, self.R: rewards, self.S_: next_states, self.T: terminals})
 
-        q_target = q_vals.copy()
+        p_target = p_vals.copy()
+        BestAct = np.argmax(np.sum(np.multiply(next_q_vals, next_p_vals),axis =2), axis = 1)
+        terminals_false = np.ones_like(terminals)-terminals
+
         for batchIndex, r in enumerate(rewards):
-            BestActIndex = 0
-            BestQSum = -99999
-            for actIndex in range(self.num_actions):
-                # if dot cannot work, try multiply -> sum
-                Q_sum = np.dot(next_q_vals[batchIndex][actIndex], softmax(q_vals[batchIndex][actIndex]))
-                if Q_sum > BestQSum:
-                    BestQSum = Q_sum
-                    BestActIndex = actIndex
-
-            p_next_astar = softmax(next_q_vals[batchIndex][actIndex])
-
             m = np.zeros(self.atoms)
             for j in range(self.atoms):
-                if terminals[batchIndex][0]:
-                    Tau_z_j = BondReward(r)
-                else:
-                    Tau_z_j = BondReward(r + self.discount * next_q_vals[batchIndex][actIndex][j])
+                Tau_z_j = np.clip(r + terminals_false[batchIndex][0]*self.discount * next_q_vals[batchIndex][BestAct[batchIndex]][j], self.Vmin, self.Vmax)
                 b_j = float(Tau_z_j-self.Vmin)/self.delta_z
                 l = math.floor(b_j)
                 u = math.ceil(b_j)
                 l_int = int(l)
                 u_int = int(u)
-                m[l_int] = m[l_int] + p_next_astar[j]*(u - b_j)
-                m[u_int] = m[u_int] + p_next_astar[j]*(b_j - l)
-            q_target[batchIndex,BestActIndex,:] = m
+                m[l_int] = m[l_int] + next_p_vals[batchIndex][BestAct[batchIndex]][j]*(u - b_j)
+                m[u_int] = m[u_int] + next_p_vals[batchIndex][BestAct[batchIndex]][j]*(b_j - l)
+            p_target[batchIndex,BestAct[batchIndex],:] = m
 
-        _,loss = self.sess.run([self._train,self.loss], feed_dict={self.S: states, self.q_target: q_target})
+        _,loss = self.sess.run([self._train,self.loss], feed_dict={self.S: states, self.p_target: p_target})
         self.update_counter += 1
         return loss
 
@@ -264,29 +240,14 @@ class DeepQLearner:
 
     def get_q_vals_distributional(self, state):
         states = state.reshape((1,self.input_width))
-        q_vals = self.sess.run([self.q_vals],{self.S: states})
-        return q_vals
+        q_vals, p_vals = self.sess.run([self.q_vals, self.p_vals],{self.S: states})
+        return q_vals, p_vals
 
     def choose_action_distributional(self, state, epsilon):
-        def softmax(logits):
-            e_x  = np.exp(logits)
-            if np.sum(e_x) == 0.0:
-                return np.full(len(logits),(1.0/self.atoms))
-            else:
-                return e_x/np.sum(e_x)
-
         if self.rng.rand() < epsilon:
             return self.rng.randint(0, self.num_actions)
-        q_vals = self.get_q_vals_distributional(state)
-
-        BestActIndex = 0
-        BestQSum = -99999
-        for actIndex in range(self.num_actions):
-            Q_sum = np.dot(q_vals[0][0][actIndex], softmax(q_vals[0][0][actIndex]))
-            if Q_sum > BestQSum:
-                BestQSum = Q_sum
-                BestActIndex = actIndex
-        return BestActIndex
+        q_vals, p_vals = self.get_q_vals_distributional(state)
+        return np.argmax(np.sum(np.multiply(q_vals[0], p_vals[0]),axis = 1))
 
     def choose_action(self, state, epsilon):
         if self.rng.rand() < epsilon:

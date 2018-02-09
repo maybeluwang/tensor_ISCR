@@ -55,7 +55,7 @@ if __name__ == "__main__":
         'batch_size': 256,
         'model_width': 1024,
         'model_height': 2,
-        'learning_rate': 0.00025,
+        'learning_rate': 0.1,
         'clip_delta': 1.0,
         'update_rule': 'adam'
     }
