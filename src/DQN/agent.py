@@ -175,20 +175,24 @@ class NeuralAgent(object):
         #TESTING---------------------------
         if self.testing:
             self.episode_reward += reward
-            #action = self._choose_action(self.test_data_set, .05,
-            action = self._choose_action(self.test_data_set, 0.,
+            if self.network.distributional:
+                action = self._choose_action_distributional(self.test_data_set, 0.,
+                                          observation, reward)
+            else:
+                action = self._choose_action(self.test_data_set, 0.,
                                          observation, np.clip(reward, -1, 1))
 
         #NOT TESTING---------------------------
         else:
-
             if len(self.data_set) > self.replay_start_size:
                 self.epsilon = max(self.epsilon_min,
                                    self.epsilon - self.epsilon_rate)
-
-                action = self._choose_action(self.data_set, self.epsilon,
-                                             observation,
-                                             np.clip(reward, -1, 1))
+                if self.network.distributional:
+                    action = self._choose_action_distributional(self.test_data_set, 0.,
+                                          observation, reward)
+                else:
+                    action = self._choose_action(self.test_data_set, 0.,
+                                         observation, np.clip(reward, -1, 1))
 
                 if self.step_counter % self.update_frequency == 0:
                     loss = self._do_training()
@@ -196,14 +200,32 @@ class NeuralAgent(object):
                     self.loss_averages.append(loss)
 
             else: # Still gathering initial random data...
-                action = self._choose_action(self.data_set, self.epsilon,
-                                             observation,
-                                             np.clip(reward, -1, 1))
+                if self.network.distributional:
+                    action = self._choose_action_distributional(self.test_data_set, 0.,
+                                          observation, reward)
+                else:
+                    action = self._choose_action(self.test_data_set, 0.,
+                                         observation, np.clip(reward, -1, 1))
 
 
         self.last_action = action
         self.last_img = observation
         self.act_seq.append(action)
+
+        return action
+    def _choose_action_distributional(self, data_set, epsilon, cur_img, reward):
+        """
+        Add the most recent data to the data set and choose
+        an action based on the current policy.
+        """
+
+        data_set.add_sample(self.last_img, self.last_action, reward, False)
+        if self.step_counter >= self.phi_length:
+            phi = data_set.phi(cur_img)
+            action = self.network.choose_action_distributional(phi, epsilon)
+        else:
+            print 'random action'
+            action = self.rng.randint(0, self.num_actions)
 
         return action
 
@@ -216,10 +238,7 @@ class NeuralAgent(object):
         data_set.add_sample(self.last_img, self.last_action, reward, False)
         if self.step_counter >= self.phi_length:
             phi = data_set.phi(cur_img)
-            if self.network.distributional:
-                action = self.network.choose_action_distributional(phi, epsilon)
-            else:
-                action = self.network.choose_action(phi, epsilon)
+            action = self.network.choose_action(phi, epsilon)
         else:
             print 'random action'
             action = self.rng.randint(0, self.num_actions)
@@ -267,12 +286,13 @@ class NeuralAgent(object):
                 self.episode_counter += 1
                 self.total_reward += self.episode_reward
         else:
-
             # Store the latest sample.
-            self.data_set.add_sample(self.last_img,
-                                     self.last_action,
-                                     np.clip(reward, -1, 1),
-                                     True)
+            if self.network.distributional:
+                self.data_set.add_sample(self.last_img, self.last_action,
+                                        reward, True)
+            else:
+                self.data_set.add_sample(self.last_img, self.last_action,
+                                        np.clip(reward, -1, 1), True)
 
             if self.batch_counter > 0:
                 self.episode_loss = np.mean(self.loss_averages)

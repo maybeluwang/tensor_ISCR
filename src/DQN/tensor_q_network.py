@@ -40,54 +40,48 @@ class DeepQLearner:
         self.batch_accumulator = batch_accumulator
         self.update_rule = update_rule
 
-        self.S = tf.placeholder(tf.float32,[None, self.input_width], 's')
-        self.S_ = tf.placeholder(tf.float32, [None, self.input_width], 's_')
-        self.R = tf.placeholder(tf.float32,[None, 1],'r')
-        self.A = tf.placeholder(tf.int32, [None, 1], 'a')
-        self.T = tf.placeholder(tf.float32, [None, 1], 't')
+        self.S = tf.placeholder(tf.float32,[None, self.input_width], name='s')
+        self.S_ = tf.placeholder(tf.float32, [None, self.input_width], name='s_')
+        self.R = tf.placeholder(tf.float32,[None, 1], name='r')
+        self.A = tf.placeholder(tf.int32, [None, 1], name='a')
+        self.T = tf.placeholder(tf.float32, [None, 1], name='t')
         self.distributional = True
         self.dueling = False
 
         if self.distributional:
-            self.Vmin = -100
-            self.Vmax = 100
+            self.Vmin = -100.0
+            self.Vmax = 100.0
             self.atoms = 11
             self.delta_z = float(self.Vmax-self.Vmin)/(self.atoms-1)
-            self.p_target = tf.placeholder(tf.float32, [None, self.num_actions, self.atoms], name='Q_target')
+            self.Z = np.linspace(self.Vmin, self.Vmax, num=self.atoms, endpoint=True)
+            self.p_target = tf.placeholder(tf.float32, [None, self.num_actions, self.atoms], name='P_target')
         else:
             self.q_target =  tf.placeholder(tf.float32, [None, self.num_actions], name='Q_target')
 
         self.update_counter = 0
-        with tf.variable_scope('eval'):
-            state = self.S
-            if self.distributional:
-                self.q_vals = self.build_rl_network_dnn(input_width, input_height,
-                                        num_actions*self.atoms, num_frames, batch_size, state/input_scale,trainable = True)
-            else:
-                self.q_vals = self.build_rl_network_dnn(input_width, input_height,
-                                        num_actions, num_frames, batch_size, state/input_scale,trainable = True)
-
-
-        with tf.variable_scope('target'):
-            state = self.S_
-            if self.distributional:
-                self.next_q_vals = self.build_rl_network_dnn(input_width,
-                                                 input_height, num_actions*self.atoms,
-                                                 num_frames, batch_size, state/input_scale,trainable = False)
-
-            else:
-                self.next_q_vals = self.build_rl_network_dnn(input_width,
-                                                 input_height, num_actions,
-                                                 num_frames, batch_size, state/input_scale,trainable = False)
-
-        self.e_params = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='eval')
-        self.t_params = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='target')
 
         if self.distributional:
-            self.p_vals = tf.nn.softmax(self.q_vals)
-            self.next_p_vals = tf.nn.softmax(self.next_q_vals)
-            loss = -tf.reduce_sum(tf.multiply(self.p_target, tf.nn.log_softmax(self.q_vals)), axis=2)
+            with tf.variable_scope('eval'):
+                state = self.S
+                self.p_vals = self.build_rl_network_dnn(input_width, input_height,
+                                        num_actions*self.atoms, num_frames, batch_size, state/input_scale,trainable = True)
+            with tf.variable_scope('target'):
+                state = self.S_
+                self.next_p_vals = self.build_rl_network_dnn(input_width, input_height,
+                                        num_actions*self.atoms, num_frames, batch_size, state/input_scale,trainable = False)
+
+            loss = -tf.reduce_sum(tf.multiply(self.p_target, tf.log(tf.clip_by_value(self.p_vals, 1e-10, 1.0))),axis=2)
+
         else:
+            with tf.variable_scope('eval'):
+                state = self.S
+                self.q_vals = self.build_rl_network_dnn(input_width, input_height,
+                                        num_actions, num_frames, batch_size, state/input_scale,trainable = True)
+            with tf.variable_scope('target'):
+                state = self.S_
+                self.next_q_vals = self.build_rl_network_dnn(input_width, input_height,
+                                        num_actions, num_frames, batch_size, state/input_scale,trainable = False)
+
             diff = self.q_target - self.q_vals
 
             if self.clip_delta > 0:
@@ -112,11 +106,15 @@ class DeepQLearner:
             loss = tf.reduce_mean(loss)
         else:
             raise ValueError("Bad accumulator: {}".format(batch_accumulator))
-        self.loss = loss
 
+        self.loss = loss
+        self.e_params = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='eval')
+        self.t_params = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='target')
 
         if update_rule == 'adam':
-            self._train = tf.train.AdamOptimizer(self.lr).minimize(loss,var_list=self.e_params)
+            self._train = tf.train.AdamOptimizer(learning_rate=self.lr, epsilon=0.01/self.batch_size).minimize(self.loss, var_list=self.e_params)
+        elif update_rule == 'RMS_prop':
+            self._train = tf.train.RMSPropOptimizer(self.lr).minimize(self.loss, var_list=self.e_params)
         else:
             raise ValueError("Unrecognized update: {}".format(update_rule))
 
@@ -124,32 +122,6 @@ class DeepQLearner:
         self.replace_target_op = [tf.assign(t, e) for t, e in zip(self.t_params, self.e_params)]
         if self.freeze_interval > 0:
             self.reset_q_hat()
-
-    def build_network(self, network_type, input_width, input_height,
-                      output_dim, num_frames, batch_size,trainable=True):
-        if network_type == "nature_cuda":
-            return self.build_nature_network(input_width, input_height,
-                                             output_dim, num_frames, batch_size)
-        if network_type == "nature_dnn":
-            return self.build_nature_network_dnn(input_width, input_height,
-                                                 output_dim, num_frames,
-                                                 batch_size)
-        elif network_type == "nips_cuda":
-            return self.build_nips_network(input_width, input_height,
-                                           output_dim, num_frames, batch_size)
-        elif network_type == "nips_dnn":
-            return self.build_nips_network_dnn(input_width, input_height,
-                                               output_dim, num_frames,
-                                               batch_size)
-        elif network_type == "rl_dnn":
-            return self.build_rl_network_dnn(input_width, input_height,
-                                                output_dim, num_frames,
-                                                batch_size,trainable)
-        elif network_type == "linear":
-            return self.build_linear_network(input_width, input_height,
-                                             output_dim, num_frames, batch_size)
-        else:
-            raise ValueError("Unrecognized network: {}".format(network_type))
 
     def CA_Algorithm(self, states, actions, rewards, next_states, terminals):
         """
@@ -175,10 +147,10 @@ class DeepQLearner:
         if (self.freeze_interval > 0 and
             self.update_counter % self.freeze_interval == 0):
             self.reset_q_hat()
-        next_q_vals, p_vals, next_p_vals = self.sess.run([self.next_q_vals, self.p_vals, self.next_p_vals],{self.S: states, self.A: actions, self.R: rewards, self.S_: next_states, self.T: terminals})
+        p_vals, next_p_vals = self.sess.run([self.p_vals, self.next_p_vals],{self.S: states, self.A: actions, self.R: rewards, self.S_: next_states, self.T: terminals})
 
         p_target = p_vals.copy()
-        BestAct = np.argmax(np.sum(np.multiply(next_q_vals, next_p_vals),axis =2), axis = 1)
+        BestAct = np.argmax(np.sum(np.multiply(self.Z, next_p_vals),axis =2), axis = 1)
         terminals_false = np.ones_like(terminals)-terminals
 
         for batchIndex, r in enumerate(rewards):
@@ -240,14 +212,15 @@ class DeepQLearner:
 
     def get_q_vals_distributional(self, state):
         states = state.reshape((1,self.input_width))
-        q_vals, p_vals = self.sess.run([self.q_vals, self.p_vals],{self.S: states})
-        return q_vals, p_vals
+        p_vals = self.sess.run([self.p_vals],{self.S: states})
+        return p_vals
 
     def choose_action_distributional(self, state, epsilon):
         if self.rng.rand() < epsilon:
             return self.rng.randint(0, self.num_actions)
-        q_vals, p_vals = self.get_q_vals_distributional(state)
-        return np.argmax(np.sum(np.multiply(q_vals[0], p_vals[0]),axis = 1))
+        p_vals = self.get_q_vals_distributional(state)
+        
+        return np.argmax(np.sum(np.multiply(self.Z, p_vals[0][0]),axis = 1))
 
     def choose_action(self, state, epsilon):
         if self.rng.rand() < epsilon:
@@ -257,127 +230,6 @@ class DeepQLearner:
 
     def reset_q_hat(self):
         self.sess.run(self.replace_target_op)
-
-    def build_nature_network(self, input_width, input_height, output_dim,
-                             num_frames, batch_size):
-        """
-        Build a large network consistent with the DeepMind Nature paper.
-        """
-        from lasagne.layers import cuda_convnet
-
-        l_in = lasagne.layers.InputLayer(
-            shape=(batch_size, num_frames, input_width, input_height)
-        )
-
-        l_conv1 = cuda_convnet.Conv2DCCLayer(
-            l_in,
-            num_filters=32,
-            filter_size=(8, 8),
-            stride=(4, 4),
-            nonlinearity=lasagne.nonlinearities.rectify,
-            W=lasagne.init.HeUniform(), # Defaults to Glorot
-            b=lasagne.init.Constant(.1),
-            dimshuffle=True
-        )
-
-        l_conv2 = cuda_convnet.Conv2DCCLayer(
-            l_conv1,
-            num_filters=64,
-            filter_size=(4, 4),
-            stride=(2, 2),
-            nonlinearity=lasagne.nonlinearities.rectify,
-            W=lasagne.init.HeUniform(),
-            b=lasagne.init.Constant(.1),
-            dimshuffle=True
-        )
-
-        l_conv3 = cuda_convnet.Conv2DCCLayer(
-            l_conv2,
-            num_filters=64,
-            filter_size=(3, 3),
-            stride=(1, 1),
-            nonlinearity=lasagne.nonlinearities.rectify,
-            W=lasagne.init.HeUniform(),
-            b=lasagne.init.Constant(.1),
-            dimshuffle=True
-        )
-
-        l_hidden1 = lasagne.layers.DenseLayer(
-            l_conv3,
-            num_units=512,
-            nonlinearity=lasagne.nonlinearities.rectify,
-            W=lasagne.init.HeUniform(),
-            b=lasagne.init.Constant(.1)
-        )
-
-        l_out = lasagne.layers.DenseLayer(
-            l_hidden1,
-            num_units=output_dim,
-            nonlinearity=None,
-            W=lasagne.init.HeUniform(),
-            b=lasagne.init.Constant(.1)
-        )
-
-        return l_out
-
-    def build_nature_network_dnn(self, input_width, input_height, output_dim,
-                                 num_frames, batch_size):
-        """
-        Build a large network consistent with the DeepMind Nature paper.
-        """
-        from lasagne.layers import dnn
-
-        l_in = lasagne.layers.InputLayer(
-            shape=(batch_size, num_frames, input_width, input_height)
-        )
-
-        l_conv1 = dnn.Conv2DDNNLayer(
-            l_in,
-            num_filters=32,
-            filter_size=(8, 8),
-            stride=(4, 4),
-            nonlinearity=lasagne.nonlinearities.rectify,
-            W=lasagne.init.HeUniform(),
-            b=lasagne.init.Constant(.1)
-        )
-
-        l_conv2 = dnn.Conv2DDNNLayer(
-            l_conv1,
-            num_filters=64,
-            filter_size=(4, 4),
-            stride=(2, 2),
-            nonlinearity=lasagne.nonlinearities.rectify,
-            W=lasagne.init.HeUniform(),
-            b=lasagne.init.Constant(.1)
-        )
-
-        l_conv3 = dnn.Conv2DDNNLayer(
-            l_conv2,
-            num_filters=64,
-            filter_size=(3, 3),
-            stride=(1, 1),
-            nonlinearity=lasagne.nonlinearities.rectify,
-            W=lasagne.init.HeUniform(),
-            b=lasagne.init.Constant(.1)
-        )
-
-        l_hidden1 = lasagne.layers.DenseLayer(
-            l_conv3,
-            num_units=512,
-            nonlinearity=lasagne.nonlinearities.rectify,
-            W=lasagne.init.HeUniform(),
-            b=lasagne.init.Constant(.1)
-        )
-
-        l_out = lasagne.layers.DenseLayer(
-            l_hidden1,
-            num_units=output_dim,
-            nonlinearity=None,
-            W=lasagne.init.HeUniform(),
-            b=lasagne.init.Constant(.1)
-        )
-
-        return l_out
 
     def build_rl_network_dnn(self, input_width, input_height, output_dim,
                             num_frames, batch_size, layer, trainable):
@@ -421,30 +273,9 @@ class DeepQLearner:
 
         if self.distributional:
             out = tf.reshape(out, shape=[-1, self.num_actions, self.atoms])
+            out = tf.nn.softmax(out)
 
         return out
-
-    def build_linear_network(self, input_width, input_height, output_dim,
-                             num_frames, batch_size):
-        """
-        Build a simple linear learner.  Useful for creating
-        tests that sanity-check the weight update code.
-        """
-
-        l_in = lasagne.layers.InputLayer(
-            shape=(batch_size, num_frames, input_width, input_height)
-        )
-
-        l_out = lasagne.layers.DenseLayer(
-            l_in,
-            num_units=output_dim,
-            nonlinearity=None,
-#            W=lasagne.init.Constant(0.0),
-            W = lasagne.init.Normal(0.01,0),
-            b=None
-        )
-
-        return l_out
 
 def main():
     input_width, input_height = [100,100]
