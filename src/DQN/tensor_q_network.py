@@ -156,7 +156,7 @@ class DeepQLearner:
         for batchIndex, r in enumerate(rewards):
             m = np.zeros(self.atoms)
             for j in range(self.atoms):
-                Tau_z_j = np.clip(r + terminals_false[batchIndex][0]*self.discount * next_q_vals[batchIndex][BestAct[batchIndex]][j], self.Vmin, self.Vmax)
+                Tau_z_j = np.clip(r + terminals_false[batchIndex][0]*self.discount * self.Z[j], self.Vmin, self.Vmax)
                 b_j = float(Tau_z_j-self.Vmin)/self.delta_z
                 l = math.floor(b_j)
                 u = math.ceil(b_j)
