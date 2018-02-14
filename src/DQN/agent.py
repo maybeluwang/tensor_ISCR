@@ -188,10 +188,10 @@ class NeuralAgent(object):
                 self.epsilon = max(self.epsilon_min,
                                    self.epsilon - self.epsilon_rate)
                 if self.network.distributional:
-                    action = self._choose_action_distributional(self.test_data_set, 0.,
+                    action = self._choose_action_distributional(self.data_set, self.epsilon,
                                           observation, reward)
                 else:
-                    action = self._choose_action(self.test_data_set, 0.,
+                    action = self._choose_action(self.data_set, self.epsilon,
                                          observation, np.clip(reward, -1, 1))
 
                 if self.step_counter % self.update_frequency == 0:
@@ -201,10 +201,10 @@ class NeuralAgent(object):
 
             else: # Still gathering initial random data...
                 if self.network.distributional:
-                    action = self._choose_action_distributional(self.test_data_set, 0.,
+                    action = self._choose_action_distributional(self.data_set, self.epsilon,
                                           observation, reward)
                 else:
-                    action = self._choose_action(self.test_data_set, 0.,
+                    action = self._choose_action(self.data_set, self.epsilon,
                                          observation, np.clip(reward, -1, 1))
 
 
